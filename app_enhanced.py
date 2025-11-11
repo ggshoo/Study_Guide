@@ -3,16 +3,76 @@ import os
 import tempfile
 import PyPDF2
 from pathlib import Path
-from ai_study_assistant import AIStudyAssistant
+from ai_study_assistant_new import AIStudyAssistant
 import uuid
+import hashlib
+import openai
 
 # Initialize session state
 if 'user_id' not in st.session_state:
     st.session_state.user_id = str(uuid.uuid4())[:8]
 if 'processed_files' not in st.session_state:
     st.session_state.processed_files = []
-if 'processed_slides' not in st.session_state:
-    st.session_state.processed_slides = {}
+
+############################
+# Authentication & API Key #
+############################
+
+def verify_credentials(user: str, password: str) -> bool:
+    """Verify username/password against environment variables.
+    Password is stored as SHA-256 hex digest in APP_PASS_HASH.
+    Returns True if credentials match; False otherwise."""
+    expected_user = os.getenv("APP_USERNAME")
+    expected_hash = os.getenv("APP_PASS_HASH")
+    if not expected_user or not expected_hash:
+        # If not configured, deny auth (fail closed) to avoid accidental open access.
+        return False
+    pwd_hash = hashlib.sha256(password.encode()).hexdigest()
+    return user == expected_user and pwd_hash == expected_hash
+
+def auth_gate():
+    """Sidebar authentication gate. Sets st.session_state.authenticated."""
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+
+    if st.session_state.authenticated:
+        return True
+
+    with st.sidebar.expander("🔐 Login Required", expanded=True):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            if verify_credentials(username, password):
+                st.session_state.authenticated = True
+                st.success("Authenticated.")
+                st.experimental_rerun()
+            else:
+                st.error("Invalid credentials.")
+    return False
+
+def ensure_api_key():
+    """Allow user to input API key; fallback to environment variable.
+    Returns True if an API key is set, else False."""
+    if "api_key" not in st.session_state:
+        st.session_state.api_key = None
+
+    with st.sidebar.expander("🔑 OpenAI API Key", expanded=False):
+        entered = st.text_input("Enter API key", type="password", placeholder="sk-...")
+        if entered:
+            st.session_state.api_key = entered.strip()
+        # Feedback
+        if st.session_state.api_key:
+            st.success("API key set for this session.")
+        elif os.getenv("OPENAI_API_KEY"):
+            st.info("Using server environment OPENAI_API_KEY.")
+        else:
+            st.warning("No API key provided yet; AI features disabled.")
+
+    final_key = st.session_state.api_key or os.getenv("OPENAI_API_KEY")
+    if not final_key:
+        return False
+    openai.api_key = final_key
+    return True
 
 # Initialize the AI Study Assistant with user-specific collection
 @st.cache_resource
@@ -52,97 +112,47 @@ def process_uploaded_pdf(uploaded_file, assistant):
         st.error(f"Error processing PDF: {str(e)}")
         return False
 
-def process_uploaded_pptx(uploaded_file, assistant):
-    """Process an uploaded PowerPoint file and add to vector database."""
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.pptx') as tmp_file:
-        tmp_file.write(uploaded_file.getvalue())
-        tmp_path = tmp_file.name
-    
-    try:
-        # Process with assistant
-        assistant.process_pptx(tmp_path)
-        
-        # Cleanup
-        os.unlink(tmp_path)
-        
-        return True
-    except Exception as e:
-        st.error(f"Error processing PowerPoint: {str(e)}")
-        return False
-
-def format_slide_recommendations(slides_by_file):
-    """Format slide recommendations for display."""
-    output = "### 📊 Slides to Review\n\n"
-    
-    for filename, slides in slides_by_file.items():
-        output += f"**{filename}**\n"
-        slide_numbers = [slide['slide_number'] for slide in slides]
-        output += f"- Slides: {', '.join(map(str, slide_numbers))}\n\n"
-    
-    return output
-
 def main():
     st.title("AI Study Assistant 🎓")
-    st.write("""Upload PowerPoint slides and practice tests to get personalized study recommendations!""")
-    
+    st.write("""Upload your own PDFs or use pre-loaded content to study more effectively.
+    Ask questions, generate quizzes, create study guides, and visualize concept relationships!""")
+
+    # Auth first
+    if not auth_gate():
+        st.stop()
+
+    # API key requirement for model features
+    api_ready = ensure_api_key()
+
     assistant = get_assistant(st.session_state.user_id)
     
     # Sidebar for file management and tools
     with st.sidebar:
         st.header("📚 Manage Content")
         
-        # PowerPoint upload section
-        with st.expander("Upload PowerPoint Slides", expanded=False):
-            pptx_files = st.file_uploader(
-                "Upload your lecture slides (.pptx)",
-                type=['pptx'],
-                accept_multiple_files=True,
-                help="Upload PowerPoint lecture slides",
-                key="pptx_uploader"
-            )
-            
-            if pptx_files:
-                if st.button("Process PowerPoint Files"):
-                    progress_bar = st.progress(0)
-                    for i, file in enumerate(pptx_files):
-                        st.write(f"Processing {file.name}...")
-                        if process_uploaded_pptx(file, assistant):
-                            if 'pptx' not in st.session_state.processed_slides:
-                                st.session_state.processed_slides['pptx'] = []
-                            st.session_state.processed_slides['pptx'].append(file.name)
-                            st.success(f"✓ {file.name}")
-                        progress_bar.progress((i + 1) / len(pptx_files))
-                    st.success("All PowerPoint files processed!")
-        
-        # PDF upload section
-        with st.expander("Upload Other PDFs", expanded=False):
-            pdf_files = st.file_uploader(
-                "Upload PDF files (notes, textbooks, etc.)",
+        # File upload section
+        with st.expander("Upload PDFs", expanded=False):
+            uploaded_files = st.file_uploader(
+                "Upload your PDF files",
                 type=['pdf'],
                 accept_multiple_files=True,
-                help="Upload additional study materials",
-                key="pdf_uploader"
+                help="Upload lecture notes, textbooks, or any study material"
             )
             
-            if pdf_files:
-                if st.button("Process PDF Files"):
+            if uploaded_files:
+                if st.button("Process Uploaded Files"):
                     progress_bar = st.progress(0)
-                    for i, file in enumerate(pdf_files):
+                    for i, file in enumerate(uploaded_files):
                         st.write(f"Processing {file.name}...")
                         if process_uploaded_pdf(file, assistant):
                             st.session_state.processed_files.append(file.name)
                             st.success(f"✓ {file.name}")
-                        progress_bar.progress((i + 1) / len(pdf_files))
-                    st.success("All PDF files processed!")
+                        progress_bar.progress((i + 1) / len(uploaded_files))
+                    st.success("All files processed!")
         
         # Show processed files
-        if st.session_state.processed_slides.get('pptx'):
-            st.write("**📊 Processed Slides:**")
-            for filename in st.session_state.processed_slides['pptx']:
-                st.write(f"- {filename}")
-        
         if st.session_state.processed_files:
-            st.write("**📄 Processed PDFs:**")
+            st.write("**Processed Files:**")
             for filename in st.session_state.processed_files:
                 st.write(f"- {filename}")
         
@@ -150,132 +160,66 @@ def main():
         st.header("🛠️ Study Tools")
         tool = st.radio(
             "Choose a tool:",
-            [
-                "🎯 Practice Test Analyzer",
-                "❓ Ask Questions",
-                "📝 Generate Quiz",
-                "📚 Create Study Guide",
-                "🗺️ Concept Map"
-            ]
+            ["Ask Questions", "Generate Quiz", "Create Study Guide", "Concept Map"]
         )
         
         st.markdown("---")
         st.write(f"**Session ID:** `{st.session_state.user_id}`")
-    
-    # Main content area
-    if tool == "🎯 Practice Test Analyzer":
-        st.header("🎯 Practice Test Analyzer")
-        st.write("""Upload your practice test and specify which questions you got wrong or want to review. 
-        The app will analyze the test, find relevant slides, and create a personalized study guide.""")
         
-        # Upload practice test
-        practice_test = st.file_uploader(
-            "Upload Practice Test (PDF)",
-            type=['pdf'],
-            key="practice_test"
-        )
-        
-        # Input for flagged questions
-        flagged_input = st.text_input(
-            "Question numbers to review (comma-separated, e.g., 1,3,5,7)",
-            help="Enter the question numbers you got wrong or want to focus on"
-        )
-        
-        if practice_test and st.button("Analyze Test & Generate Study Guide"):
-            # Parse flagged questions
-            flagged_questions = None
-            if flagged_input.strip():
-                try:
-                    flagged_questions = [int(q.strip()) for q in flagged_input.split(',')]
-                except:
-                    st.warning("Could not parse question numbers. Analyzing all questions.")
-            
-            # Save practice test temporarily
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-                tmp_file.write(practice_test.getvalue())
-                tmp_path = tmp_file.name
-            
-            try:
-                with st.spinner("Analyzing your practice test..."):
-                    # Generate targeted study guide
-                    result = assistant.create_targeted_study_guide(tmp_path, flagged_questions)
-                
-                # Display results
-                st.success("✅ Analysis complete!")
-                
-                # Show slide recommendations
-                st.markdown(format_slide_recommendations(result['slides_to_review']))
-                
-                # Show detailed slide content
-                with st.expander("📋 View Slide Details"):
-                    for filename, slides in result['slides_to_review'].items():
-                        st.subheader(filename)
-                        for slide in slides:
-                            st.markdown(f"**Slide {slide['slide_number']}:**")
-                            st.text(slide['content'][:300] + "...")
-                            st.markdown("---")
-                
-                # Show test analysis
-                with st.expander("🔍 Test Analysis"):
-                    st.markdown(result['test_analysis'])
-                
-                # Show study guide
-                st.markdown("---")
-                st.header("📖 Your Personalized Study Guide")
-                st.markdown(result['study_guide'])
-                
-                # Cleanup
-                os.unlink(tmp_path)
-                
-            except Exception as e:
-                st.error(f"Error analyzing test: {str(e)}")
-                os.unlink(tmp_path)
-        
-    elif tool == "❓ Ask Questions":
+    if tool == "Ask Questions":
         st.header("Ask Questions About Course Content")
         query = st.text_input("Enter your question:")
         
         if query:
             with st.spinner("Searching and generating response..."):
-                result = assistant.query_knowledge_base(query)
+                if not api_ready:
+                    st.error("Provide an API key to enable AI responses.")
+                else:
+                    result = assistant.query_knowledge_base(query)
+                    st.write("### Answer:")
+                    st.write(result['answer'])
+                    with st.expander("View source content"):
+                        for chunk, metadata in zip(result['source_chunks'], result['metadata']):
+                            st.text(f"Source: {metadata['source']}")
+                            st.text(f"Chunk {metadata['chunk_id']}:")
+                            st.text(chunk)
+                            st.markdown("---")
                 
-                st.write("### Answer:")
-                st.write(result['answer'])
-                
-                with st.expander("View source content"):
-                    for chunk, metadata in zip(result['source_chunks'], result['metadata']):
-                        st.text(f"Source: {metadata.get('source', 'Unknown')}")
-                        if 'slide_number' in metadata:
-                            st.text(f"Slide {metadata['slide_number']}:")
-                        st.text(chunk[:300] + "...")
-                        st.markdown("---")
-                
-    elif tool == "📝 Generate Quiz":
+    elif tool == "Generate Quiz":
         st.header("Generate Practice Quiz")
         topic = st.text_input("Enter the topic for the quiz:")
         
         if topic:
             with st.spinner("Generating quiz..."):
-                quiz = assistant.generate_quiz(topic)
-                st.markdown(quiz)
+                if not api_ready:
+                    st.error("Provide an API key to enable quiz generation.")
+                else:
+                    quiz = assistant.generate_quiz(topic)
+                    st.markdown(quiz)
                 
-    elif tool == "📚 Create Study Guide":
+    elif tool == "Create Study Guide":
         st.header("Create Focused Study Guide")
         topic = st.text_input("Enter the topic for the study guide:")
         
         if topic:
             with st.spinner("Creating study guide..."):
-                guide = assistant.create_study_guide(topic)
-                st.markdown(guide)
+                if not api_ready:
+                    st.error("Provide an API key to enable study guide creation.")
+                else:
+                    guide = assistant.create_study_guide(topic)
+                    st.markdown(guide)
                 
-    elif tool == "🗺️ Concept Map":
+    elif tool == "Concept Map":
         st.header("Generate Concept Map")
         topic = st.text_input("Enter the topic to map:")
         
         if topic:
             with st.spinner("Generating concept map..."):
-                concept_map = assistant.concept_map(topic)
-                st.code(concept_map)
+                if not api_ready:
+                    st.error("Provide an API key to enable concept map generation.")
+                else:
+                    concept_map = assistant.concept_map(topic)
+                    st.code(concept_map)
 
 if __name__ == "__main__":
     main()
