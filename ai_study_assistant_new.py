@@ -3,6 +3,7 @@ from pathlib import Path
 import chromadb
 from chromadb.config import Settings
 import openai
+import json
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 from dotenv import load_dotenv
@@ -326,28 +327,45 @@ Format as a structured list with clear question-by-question breakdown."""
         print("📝 Analyzing practice test...")
         # Analyze the practice test
         test_analysis = self.analyze_practice_test(test_path, flagged_questions)
-        
-        print("🔍 Finding relevant slides...")
-        # Find relevant slides based on the analysis (adjust count based on mode)
-        n_slides = 12 if fast_mode else 20
-        relevant_slides = self.find_relevant_slides(test_analysis["test_analysis"], n_results=n_slides)
-        
+
+        # Extract questions for explicit mapping
+        questions_data = self.extract_questions_and_answers(test_path)
+        questions = questions_data.get('questions', {})
+
+        print("🔍 Matching each question to slides...")
+        # For each question, find top matching slides
+        question_slides_map = {}
+        n_per_question = 3 if fast_mode else 5
+        for q_num, q_text in questions.items():
+            # Use embeddings to find relevant slides for each question
+            slides = self.find_relevant_slides(q_text, n_results=n_per_question)
+            question_slides_map[q_num] = slides
+
         print("📚 Generating study guide...")
         # Adjust generation parameters for fast mode
-        max_tokens = 1000 if fast_mode else 1600
+        max_tokens = 3500 if not fast_mode else 2000  # Increased token limit
         temperature = 0.4 if fast_mode else 0.5
-        
-        # Create comprehensive study guide
-        study_guide_prompt = f"""Based on this practice test analysis and the relevant course material, create a {"concise" if fast_mode else "comprehensive"} study guide.
+
+        # If too many questions, batch them to avoid truncation
+        question_items = list(questions.items())
+        batch_size = 10 if not fast_mode else 15
+        study_guide_parts = []
+        for i in range(0, len(question_items), batch_size):
+            batch_questions = dict(question_items[i:i+batch_size])
+            batch_slides_map = {q: question_slides_map[q] for q in batch_questions}
+            batch_prompt = f"""Based on this practice test analysis and the relevant course material, create a {"concise" if fast_mode else "comprehensive"} study guide for the following questions:
 
 Practice Test Analysis:
 {test_analysis["test_analysis"]}
 
 Relevant Course Material (from PowerPoint slides):
-{self._format_slides_for_prompt(relevant_slides)}
+{self._format_slides_for_prompt(batch_slides_map)}
+
+Questions:
+{json.dumps(batch_questions, indent=2)}
 
 Create a personalized study guide that:
-1. For EACH flagged/incorrect question:
+1. For EACH question:
    - Clearly state which slide(s) cover the required concept
    - Explain the concept in detail with examples from the slides
    - Highlight what was likely misunderstood
@@ -362,21 +380,22 @@ Create a personalized study guide that:
 
 Format with clear headings, bullet points, and explicit slide references."""
 
-        response = openai.ChatCompletion.create(
-            model=self.GEN_MODEL,
-            messages=[
-                {"role": "system", "content": "You are an expert tutor creating personalized study guides."},
-                {"role": "user", "content": study_guide_prompt}
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
-        
-        study_guide = response.choices[0].message["content"]
-        
+            response = openai.ChatCompletion.create(
+                model=self.GEN_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are an expert tutor creating personalized study guides."},
+                    {"role": "user", "content": batch_prompt}
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            study_guide_parts.append(response.choices[0].message["content"])
+
+        study_guide = "\n\n".join(study_guide_parts)
+
         return {
             "study_guide": study_guide,
-            "slides_to_review": relevant_slides,
+            "question_slides_map": question_slides_map,
             "test_analysis": test_analysis["test_analysis"]
         }
 
