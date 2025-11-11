@@ -5,6 +5,8 @@ import PyPDF2
 from pathlib import Path
 from ai_study_assistant_new import AIStudyAssistant
 import uuid
+import json
+from datetime import datetime
 
 # Initialize session state
 if 'user_id' not in st.session_state:
@@ -83,6 +85,23 @@ def main():
     # Sidebar for file management and tools
     with st.sidebar:
         st.header("📚 Manage Content")
+        # Saved analyses
+        with st.expander("💾 Saved Analyses", expanded=False):
+            save_dir = Path("saved_results")
+            save_dir.mkdir(parents=True, exist_ok=True)
+            files = sorted(save_dir.glob("*.json"), reverse=True)
+            if files:
+                sel = st.selectbox("Load a previous analysis", [f.name for f in files])
+                if st.button("Load Selected"):
+                    try:
+                        data = json.loads(Path(save_dir/sel).read_text(encoding="utf-8"))
+                        st.session_state["pta_result"] = data.get("result")
+                        st.session_state["pta_test_name"] = data.get("test_name", sel)
+                        st.success("Loaded saved analysis.")
+                    except Exception as e:
+                        st.error(f"Failed to load: {e}")
+            else:
+                st.caption("No saved analyses yet.")
         
         # PowerPoint upload section
         with st.expander("Upload PowerPoint Slides", expanded=False):
@@ -199,6 +218,22 @@ def main():
                     # Persist result in session so it survives navigation
                     st.session_state["pta_result"] = result
                     st.session_state["pta_test_name"] = practice_test.name
+                    # Save to disk for persistence across restarts
+                    try:
+                        save_dir = Path("saved_results")
+                        save_dir.mkdir(parents=True, exist_ok=True)
+                        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                        sid = st.session_state.user_id
+                        out = {
+                            "test_name": practice_test.name,
+                            "timestamp": stamp,
+                            "session_id": sid,
+                            "result": result,
+                        }
+                        out_path = save_dir / f"pta_{stamp}_{sid}.json"
+                        out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+                    except Exception as e:
+                        st.warning(f"Could not save analysis: {e}")
                 
                 # Display results
                 st.success("✅ Analysis complete!")
