@@ -202,6 +202,37 @@ def format_slide_recommendations(question_slides_map):
     
     return output
 
+def format_priority_slides(question_slides_map):
+    """Format priority slides grouped by file and slide, showing which questions each slide addresses."""
+    # Reorganize data: file -> slide_num -> [questions]
+    slide_to_questions = {}
+    
+    for q_num, slides_by_file in question_slides_map.items():
+        for filename, slides in slides_by_file.items():
+            if filename not in slide_to_questions:
+                slide_to_questions[filename] = {}
+            
+            for slide in slides:
+                slide_num = slide['slide_number']
+                if slide_num not in slide_to_questions[filename]:
+                    slide_to_questions[filename][slide_num] = []
+                slide_to_questions[filename][slide_num].append(q_num)
+    
+    # Format output
+    output = "### 🎯 Priority Slides to Review\n\n"
+    
+    for filename in sorted(slide_to_questions.keys()):
+        output += f"**{filename}**\n"
+        sorted_slides = sorted(slide_to_questions[filename].items())
+        
+        for slide_num, questions in sorted_slides:
+            q_list = ', '.join([f"Q{q}" for q in sorted(questions)])
+            output += f"  - Slide {slide_num} → *Covers: {q_list}*\n"
+        
+        output += "\n"
+    
+    return output
+
 def main():
     st.title("🎯 Practice Test Analyzer")
     st.write("""Upload your class materials (PowerPoint slides and PDF notes) and practice tests. 
@@ -406,10 +437,15 @@ def main():
                             
                             # Show question-to-slide mapping
                             if 'question_slides_map' in result:
-                                st.markdown(format_slide_recommendations(result['question_slides_map']))
+                                # Show priority slides first (grouped by slide)
+                                st.markdown(format_priority_slides(result['question_slides_map']))
+                                
+                                # Show question-by-question breakdown in expander
+                                with st.expander("📋 View by Question (which slides for each question)"):
+                                    st.markdown(format_slide_recommendations(result['question_slides_map']))
                                 
                                 # Show detailed slide content by question
-                                with st.expander("📋 View Detailed Slide Content by Question"):
+                                with st.expander("� View Detailed Slide Content"):
                                     for q_num, slides_by_file in result['question_slides_map'].items():
                                         st.subheader(f"Question {q_num}")
                                         for filename, slides in slides_by_file.items():
