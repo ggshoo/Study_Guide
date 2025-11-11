@@ -135,7 +135,7 @@ def ensure_api_key():
 
 # Initialize the AI Study Assistant with user-specific collection
 @st.cache_resource
-def get_assistant(user_id):
+def get_assistant(user_id, _version=2):  # Increment version to force cache refresh
     return AIStudyAssistant(persist_directory=f"db_{user_id}")
 
 def process_uploaded_pdf(uploaded_file, assistant):
