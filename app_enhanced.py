@@ -279,11 +279,12 @@ def format_question_slide_summary(question_slides_map):
     ]
     # sort by numeric question order
     for q_num in sorted(question_slides_map, key=lambda x: int(x)):
-        slide_refs = []
+        # Group slides by filename and list slide numbers once per file
+        per_file = []
         for filename, slides in question_slides_map[q_num].items():
-            for slide in slides:
-                slide_refs.append(f"{filename}#Slide {slide['slide_number']}")
-        lines.append(f"| {q_num} | {', '.join(slide_refs)} |")
+            slide_nums = sorted({int(slide['slide_number']) for slide in slides})
+            per_file.append(f"{filename}: {', '.join(map(str, slide_nums))}")
+        lines.append(f"| {q_num} | {'; '.join(per_file)} |")
     return "\n".join(lines)
 
 def main():
