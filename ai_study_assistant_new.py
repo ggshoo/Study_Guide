@@ -196,11 +196,11 @@ IMPORTANT Instructions:
         response = openai.ChatCompletion.create(
             model=self.GEN_MODEL,
             messages=[
-                {"role": "system", "content": "You are an expert at extracting structured information from practice tests. Always return valid JSON."},
+                {"role": "system", "content": "You are an expert at extracting structured information from practice tests. Always return valid JSON with ALL questions."},
                 {"role": "user", "content": extraction_prompt}
             ],
             temperature=0.1,
-            max_tokens=2000
+            max_tokens=3000  # Increased to handle more questions
         )
         
         import json
@@ -331,15 +331,34 @@ Format as a structured list with clear question-by-question breakdown."""
         # Extract questions for explicit mapping
         questions_data = self.extract_questions_and_answers(test_path)
         questions = questions_data.get('questions', {})
+        
+        # VALIDATION: Ensure all questions extracted
+        print(f"✓ Extracted {len(questions)} questions from test")
+        if len(questions) == 0:
+            print("⚠️ WARNING: No questions extracted from test!")
+            return {
+                "study_guide": "ERROR: Could not extract questions from the test. Please ensure the PDF contains readable text.",
+                "question_slides_map": {},
+                "test_analysis": "No questions found"
+            }
 
         print("🔍 Matching each question to slides...")
         # For each question, find top matching slides
         question_slides_map = {}
         n_per_question = 3 if fast_mode else 5
-        for q_num, q_text in questions.items():
+        
+        # Process ALL questions, not just flagged ones
+        questions_to_process = questions.items()
+        if flagged_questions:
+            # If specific questions flagged, prioritize those but include all
+            print(f"  Prioritizing {len(flagged_questions)} flagged questions")
+        
+        for q_num, q_text in questions_to_process:
             # Use embeddings to find relevant slides for each question
             slides = self.find_relevant_slides(q_text, n_results=n_per_question)
             question_slides_map[q_num] = slides
+            
+        print(f"✓ Mapped all {len(question_slides_map)} questions to slides")
 
         print("📚 Generating study guide...")
         # Adjust generation parameters for fast mode
@@ -350,9 +369,15 @@ Format as a structured list with clear question-by-question breakdown."""
         question_items = list(questions.items())
         batch_size = 10 if not fast_mode else 15
         study_guide_parts = []
-        for i in range(0, len(question_items), batch_size):
+        
+        print(f"  Processing {len(question_items)} questions in {(len(question_items) + batch_size - 1) // batch_size} batches")
+        
+        for batch_idx, i in enumerate(range(0, len(question_items), batch_size)):
             batch_questions = dict(question_items[i:i+batch_size])
             batch_slides_map = {q: question_slides_map[q] for q in batch_questions}
+            q_nums = sorted([int(q) for q in batch_questions.keys()])
+            print(f"  Batch {batch_idx + 1}: Questions {q_nums[0]}-{q_nums[-1]}")
+            
             batch_prompt = f"""Based on this practice test analysis and the relevant course material, create a {"concise" if fast_mode else "comprehensive"} study guide for the following questions:
 
 Practice Test Analysis:
@@ -364,26 +389,23 @@ Relevant Course Material (from PowerPoint slides):
 Questions:
 {json.dumps(batch_questions, indent=2)}
 
-Create a personalized study guide that:
-1. For EACH question:
-   - Clearly state which slide(s) cover the required concept
-   - Explain the concept in detail with examples from the slides
-   - Highlight what was likely misunderstood
-   - Provide step-by-step guidance on how to approach similar questions
+CRITICAL: You MUST cover ALL {len(batch_questions)} questions listed above. For EACH question:
+1. Clearly state which slide(s) cover the required concept
+2. Explain the medical concept in detail with examples from the slides
+3. Highlight what was likely misunderstood
+4. Provide step-by-step guidance on how to approach similar questions
 
-2. Organize by question number when possible, showing:
-   - Question X → Review Slide Y from [filename]
-   - Key concept explanation
-   - Common mistakes to avoid
+Organize by question number, showing:
+- Question X → Review Slide Y from [filename]
+- Key medical concept explanation
+- Common mistakes to avoid
 
-3. Include summary of priority slides to review
-
-Format with clear headings, bullet points, and explicit slide references."""
+Use clear headings, bullet points, and explicit slide references. Be medically accurate."""
 
             response = openai.ChatCompletion.create(
                 model=self.GEN_MODEL,
                 messages=[
-                    {"role": "system", "content": "You are an expert tutor creating personalized study guides."},
+                    {"role": "system", "content": "You are a medical education expert creating accurate study guides for medical students. Always cover ALL questions provided."},
                     {"role": "user", "content": batch_prompt}
                 ],
                 temperature=temperature,
@@ -391,11 +413,15 @@ Format with clear headings, bullet points, and explicit slide references."""
             )
             study_guide_parts.append(response.choices[0].message["content"])
 
-        study_guide = "\n\n".join(study_guide_parts)
+        study_guide = "\n\n---\n\n".join(study_guide_parts)
+        
+        print(f"✓ Generated study guide with {len(study_guide_parts)} sections")
 
         return {
             "study_guide": study_guide,
             "question_slides_map": question_slides_map,
+            "total_questions": len(questions),
+            "questions_mapped": len(question_slides_map),
             "test_analysis": test_analysis["test_analysis"]
         }
 
@@ -580,4 +606,3 @@ Format with clear headings, bullet points, and explicit slide references."""
         )
 
         return response.choices[0].message["content"]
-# Force reload Tue Nov 11 12:48:33 EST 2025

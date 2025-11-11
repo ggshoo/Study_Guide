@@ -495,6 +495,17 @@ def main():
                             # Display results - SUMMARY FIRST
                             st.success(f"✅ Analysis complete in {elapsed:.1f} seconds!")
                             
+                            # Show validation metrics
+                            if 'total_questions' in result and 'questions_mapped' in result:
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("Total Questions", result['total_questions'])
+                                with col2:
+                                    st.metric("Questions Mapped", result['questions_mapped'])
+                                with col3:
+                                    coverage = (result['questions_mapped'] / result['total_questions'] * 100) if result['total_questions'] > 0 else 0
+                                    st.metric("Coverage", f"{coverage:.0f}%")
+                            
                             st.markdown("---")
                             # Summary table FIRST, then priority slides, then detailed guide
                             if 'question_slides_map' in result:
