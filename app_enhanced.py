@@ -204,30 +204,43 @@ def format_slide_recommendations(question_slides_map):
 
 def format_priority_slides(question_slides_map):
     """Format priority slides grouped by file and slide, showing which questions each slide addresses."""
-    # Reorganize data: file -> slide_num -> [questions]
-    slide_to_questions = {}
+    # Reorganize data: file -> slide_num -> {questions: [], content: str}
+    slide_info = {}
     
     for q_num, slides_by_file in question_slides_map.items():
         for filename, slides in slides_by_file.items():
-            if filename not in slide_to_questions:
-                slide_to_questions[filename] = {}
+            if filename not in slide_info:
+                slide_info[filename] = {}
             
             for slide in slides:
                 slide_num = slide['slide_number']
-                if slide_num not in slide_to_questions[filename]:
-                    slide_to_questions[filename][slide_num] = []
-                slide_to_questions[filename][slide_num].append(q_num)
+                if slide_num not in slide_info[filename]:
+                    slide_info[filename][slide_num] = {
+                        'questions': [],
+                        'content': slide.get('content', '')
+                    }
+                slide_info[filename][slide_num]['questions'].append(q_num)
     
     # Format output
     output = "### 🎯 Priority Slides to Review\n\n"
     
-    for filename in sorted(slide_to_questions.keys()):
+    for filename in sorted(slide_info.keys()):
         output += f"**{filename}**\n"
-        sorted_slides = sorted(slide_to_questions[filename].items())
+        sorted_slides = sorted(slide_info[filename].items())
         
-        for slide_num, questions in sorted_slides:
-            q_list = ', '.join([f"Q{q}" for q in sorted(questions)])
-            output += f"  - Slide {slide_num} → *Covers: {q_list}*\n"
+        for slide_num, info in sorted_slides:
+            questions = sorted(info['questions'])
+            q_list = ', '.join(map(str, questions))
+            
+            # Extract a brief topic from the slide content (first 60 chars or first sentence)
+            content = info['content'].strip()
+            # Try to get first sentence or first line
+            topic = content.split('.')[0] if '.' in content[:100] else content[:60]
+            topic = topic.strip().replace('\n', ' ')[:60]
+            if len(content) > 60:
+                topic += "..."
+            
+            output += f"  - **Slide {slide_num}**: {topic} *Test Qs: {q_list}*\n"
         
         output += "\n"
     
