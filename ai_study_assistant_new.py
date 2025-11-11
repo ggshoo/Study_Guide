@@ -580,3 +580,4 @@ Format with clear headings, bullet points, and explicit slide references."""
         )
 
         return response.choices[0].message["content"]
+# Force reload Tue Nov 11 12:48:33 EST 2025
