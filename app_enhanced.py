@@ -302,8 +302,14 @@ def main():
     # Fast mode toggle
     fast_mode = st.checkbox("⚡ Fast Mode (less detailed but quicker)", value=False)
     
-    if practice_test and flagged_input and st.button("🔍 Analyze Test & Find Slides to Review"):
-        if not api_ready:
+    # Always show the button
+    if st.button("🔍 Analyze Test & Find Slides to Review", type="primary"):
+        # Validation
+        if not practice_test:
+            st.error("Please upload a practice test PDF first.")
+        elif not flagged_input:
+            st.error("Please enter the question numbers you got wrong.")
+        elif not api_ready:
             st.error("Please provide an API key to enable analysis.")
         else:
             # Parse flagged questions
