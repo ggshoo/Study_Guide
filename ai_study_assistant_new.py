@@ -141,11 +141,12 @@ class AIStudyAssistant:
         return text
     
     def extract_questions_and_answers(self, test_path: str):
-        """Extract questions and correct answers from a practice test.
+        """Extract questions, correct answers, and user's answers from a practice test.
         
         Returns:
-            dict with 'questions' (dict of q_num -> question_text) and 
-            'correct_answers' (dict of q_num -> answer)
+            dict with 'questions' (dict of q_num -> question_text),
+            'correct_answers' (dict of q_num -> answer),
+            'user_answers' (dict of q_num -> answer if found)
         """
         ext = Path(test_path).suffix.lower()
         if ext == ".pdf":
@@ -156,7 +157,7 @@ class AIStudyAssistant:
         else:
             raise ValueError(f"Unsupported file type: {ext}")
         
-        extraction_prompt = f"""Extract all questions and their correct answers from this practice test.
+        extraction_prompt = f"""Extract all questions, correct answers, AND the user's answers from this practice test.
 
 Practice Test Content:
 {test_content}
@@ -172,13 +173,22 @@ Return the data in this exact JSON format:
         "1": "A",
         "2": "B",
         ...
+    }},
+    "user_answers": {{
+        "1": "B",
+        "2": "B",
+        ...
     }}
 }}
 
-Rules:
+IMPORTANT Instructions:
 - Question numbers should be integers as strings
 - For multiple choice, return just the letter (A, B, C, D, etc.)
+- Look for any written answers, circled answers, or marked selections on the test
+- If you find the answer key, extract it into correct_answers
+- If you find user's marked/written answers, extract them into user_answers
 - If no answer key is found, return an empty correct_answers dict
+- If no user answers are found, return an empty user_answers dict
 - Include ALL questions you can identify
 """
         
@@ -203,10 +213,17 @@ Rules:
         
         try:
             result = json.loads(content)
+            # Ensure all expected keys exist
+            if 'questions' not in result:
+                result['questions'] = {}
+            if 'correct_answers' not in result:
+                result['correct_answers'] = {}
+            if 'user_answers' not in result:
+                result['user_answers'] = {}
             return result
         except:
             # Fallback if parsing fails
-            return {"questions": {}, "correct_answers": {}}
+            return {"questions": {}, "correct_answers": {}, "user_answers": {}}
 
     def analyze_practice_test(self, test_path: str, flagged_questions: list = None):
         """Analyze practice test (PDF or PPTX) and identify topics to review.

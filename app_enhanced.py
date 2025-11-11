@@ -135,7 +135,7 @@ def ensure_api_key():
 
 # Initialize the AI Study Assistant with user-specific collection
 @st.cache_resource
-def get_assistant(user_id, _version=2):  # Increment version to force cache refresh
+def get_assistant(user_id, _version=3):  # Increment version to force cache refresh
     return AIStudyAssistant(persist_directory=f"db_{user_id}")
 
 def process_uploaded_pdf(uploaded_file, assistant):
@@ -283,190 +283,160 @@ def main():
     
     # Main content area - Practice Test Analyzer
     st.header("📝 Analyze Your Practice Test")
-    st.write("""Upload your practice test and enter your answers. The app will automatically detect which questions you got wrong and match them to specific slides from your uploaded materials.""")
+    st.write("""Upload your practice test (with your answers marked/written on it). 
+    The app will automatically detect which questions you got wrong and match them to specific slides.""")
     
     # Upload practice test
     practice_test = st.file_uploader(
         "Upload Practice Test (PDF)",
         type=['pdf'],
-        key="practice_test"
+        key="practice_test",
+        help="Upload a PDF with your answers already marked/written on it"
     )
     
-    # Step 1: Extract questions from test
-    if practice_test and 'questions_data' not in st.session_state:
-        if st.button("📋 Load Questions from Test"):
-            with st.spinner("Extracting questions from test..."):
+    # Fast mode toggle
+    fast_mode = st.checkbox("⚡ Fast Mode (less detailed but quicker)", value=False)
+    
+    # Step 1: Extract and analyze test
+    if practice_test:
+        if st.button("� Analyze Test & Find Slides to Review", type="primary"):
+            if not api_ready:
+                st.error("Please provide an API key to enable analysis.")
+            else:
                 # Save practice test temporarily
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
                     tmp_file.write(practice_test.getvalue())
                     tmp_path = tmp_file.name
                 
                 try:
-                    questions_data = assistant.extract_questions_and_answers(tmp_path)
-                    st.session_state.questions_data = questions_data
-                    st.session_state.test_path = tmp_path
-                    st.success(f"✅ Loaded {len(questions_data.get('questions', {}))} questions!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error extracting questions: {str(e)}")
-                    os.unlink(tmp_path)
-    
-    # Step 2: Display questions and collect user answers
-    if 'questions_data' in st.session_state:
-        questions = st.session_state.questions_data.get('questions', {})
-        correct_answers = st.session_state.questions_data.get('correct_answers', {})
-        
-        if questions:
-            st.success(f"✅ Loaded {len(questions)} questions from your test")
-            
-            # Show if answer key was found
-            if correct_answers:
-                st.info("✓ Answer key detected in test")
-            else:
-                st.warning("⚠️ No answer key found - you'll need to enter the correct answers manually")
-            
-            st.markdown("---")
-            st.subheader("Enter Your Answers")
-            
-            # Initialize user answers in session state
-            if 'user_answers' not in st.session_state:
-                st.session_state.user_answers = {}
-            
-            # Create two columns for compact display
-            col1, col2 = st.columns(2)
-            
-            sorted_q_nums = sorted([int(q) for q in questions.keys()])
-            
-            for idx, q_num in enumerate(sorted_q_nums):
-                q_num_str = str(q_num)
-                with col1 if idx % 2 == 0 else col2:
-                    # Show question preview
-                    q_text = questions[q_num_str]
-                    preview = q_text[:100] + "..." if len(q_text) > 100 else q_text
+                    with st.spinner("📖 Extracting questions and answers from test..."):
+                        questions_data = assistant.extract_questions_and_answers(tmp_path)
                     
-                    # Input for user's answer
-                    user_answer = st.text_input(
-                        f"Q{q_num}: {preview}",
-                        value=st.session_state.user_answers.get(q_num_str, ""),
-                        key=f"answer_{q_num}",
-                        placeholder="Your answer (e.g., A, B, C, D)"
-                    )
-                    st.session_state.user_answers[q_num_str] = user_answer.strip().upper()
-            
-            # If no answer key, allow manual entry of correct answers
-            if not correct_answers:
-                st.markdown("---")
-                st.subheader("Enter Correct Answers")
-                st.write("Since no answer key was found, please enter the correct answers:")
-                
-                if 'correct_answers_manual' not in st.session_state:
-                    st.session_state.correct_answers_manual = {}
-                
-                col1, col2 = st.columns(2)
-                for idx, q_num in enumerate(sorted_q_nums):
-                    q_num_str = str(q_num)
-                    with col1 if idx % 2 == 0 else col2:
-                        correct = st.text_input(
-                            f"Correct answer for Q{q_num}",
-                            value=st.session_state.correct_answers_manual.get(q_num_str, ""),
-                            key=f"correct_{q_num}",
-                            placeholder="e.g., A"
-                        )
-                        st.session_state.correct_answers_manual[q_num_str] = correct.strip().upper()
-                
-                correct_answers = st.session_state.correct_answers_manual
-            
-            st.markdown("---")
-            
-            # Fast mode toggle
-            fast_mode = st.checkbox("⚡ Fast Mode (less detailed but quicker)", value=False)
-            
-            # Clear button
-            col1, col2 = st.columns([1, 5])
-            with col1:
-                if st.button("🔄 Clear & Restart"):
-                    for key in ['questions_data', 'user_answers', 'correct_answers_manual', 'test_path']:
-                        if key in st.session_state:
-                            del st.session_state[key]
-                    st.rerun()
-            
-            with col2:
-                # Analyze button
-                if st.button("🔍 Analyze My Results & Find Slides to Review", type="primary"):
-                    # Check if user has entered answers
-                    if not any(st.session_state.user_answers.values()):
-                        st.error("Please enter your answers first.")
-                    elif not any(correct_answers.values()):
-                        st.error("Please enter the correct answers.")
-                    elif not api_ready:
-                        st.error("Please provide an API key to enable analysis.")
+                    questions = questions_data.get('questions', {})
+                    correct_answers = questions_data.get('correct_answers', {})
+                    user_answers = questions_data.get('user_answers', {})
+                    
+                    if not questions:
+                        st.error("Could not extract questions from the test. Please make sure it's a readable PDF.")
+                        os.unlink(tmp_path)
                     else:
-                        # Compare answers and identify wrong questions
+                        st.success(f"✅ Extracted {len(questions)} questions from test")
+                        
+                        # Show what was found
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Questions Found", len(questions))
+                        with col2:
+                            st.metric("Answer Key Found", len(correct_answers) if correct_answers else "No")
+                        with col3:
+                            st.metric("Your Answers Found", len(user_answers) if user_answers else "No")
+                        
+                        # Determine wrong questions
                         wrong_questions = []
-                        total_questions = 0
+                        unanswered_questions = []
                         
-                        for q_num_str in questions.keys():
-                            if q_num_str in correct_answers and correct_answers[q_num_str]:
-                                total_questions += 1
-                                user_ans = st.session_state.user_answers.get(q_num_str, "").upper()
-                                correct_ans = correct_answers[q_num_str].upper()
+                        if correct_answers and user_answers:
+                            # Both answer key and user answers found - compare them
+                            for q_num_str in questions.keys():
+                                if q_num_str in correct_answers and correct_answers[q_num_str]:
+                                    if q_num_str in user_answers and user_answers[q_num_str]:
+                                        # Compare answers
+                                        if user_answers[q_num_str].upper() != correct_answers[q_num_str].upper():
+                                            wrong_questions.append(int(q_num_str))
+                                    else:
+                                        # No user answer found - assume wrong
+                                        unanswered_questions.append(int(q_num_str))
+                            
+                            total = len([q for q in questions.keys() if q in correct_answers and correct_answers[q]])
+                            correct_count = total - len(wrong_questions) - len(unanswered_questions)
+                            
+                            st.markdown("---")
+                            st.subheader("📊 Test Results")
+                            
+                            if wrong_questions or unanswered_questions:
+                                score = (correct_count / total * 100) if total > 0 else 0
+                                st.info(f"**Score:** {correct_count}/{total} ({score:.1f}%)")
                                 
-                                if user_ans != correct_ans:
-                                    wrong_questions.append(int(q_num_str))
+                                if wrong_questions:
+                                    st.error(f"**Questions with wrong answers:** {', '.join(map(str, wrong_questions))}")
+                                if unanswered_questions:
+                                    st.warning(f"**Unanswered/unclear questions (assumed wrong):** {', '.join(map(str, unanswered_questions))}")
+                                
+                                # Combine wrong and unanswered for analysis
+                                questions_to_review = sorted(wrong_questions + unanswered_questions)
+                                
+                            else:
+                                st.success("🎉 Perfect score! You got all questions correct!")
+                                st.balloons()
+                                questions_to_review = []
                         
-                        if not wrong_questions:
-                            st.success("🎉 Perfect score! You got all questions correct!")
-                            st.balloons()
+                        elif correct_answers and not user_answers:
+                            # Only answer key found - assume all questions wrong/need review
+                            st.warning("⚠️ Answer key found but no user answers detected. Analyzing all questions.")
+                            questions_to_review = [int(q) for q in questions.keys() if q in correct_answers]
+                        
+                        elif user_answers and not correct_answers:
+                            # Only user answers found - can't compare, analyze all
+                            st.warning("⚠️ Your answers found but no answer key detected. Analyzing all questions.")
+                            questions_to_review = [int(q) for q in questions.keys()]
+                        
                         else:
-                            # Show results summary
-                            correct_count = total_questions - len(wrong_questions)
-                            score = (correct_count / total_questions * 100) if total_questions > 0 else 0
+                            # Neither found - analyze everything
+                            st.warning("⚠️ Could not detect answers or answer key. Analyzing all questions.")
+                            questions_to_review = [int(q) for q in questions.keys()]
+                        
+                        # Analyze questions
+                        if questions_to_review:
+                            st.markdown("---")
+                            st.subheader("🔍 Finding Relevant Slides...")
                             
-                            st.info(f"📊 Score: {correct_count}/{total_questions} ({score:.1f}%)")
-                            st.warning(f"Questions to review: {', '.join(map(str, wrong_questions))}")
+                            start_time = time.time()
                             
-                            # Analyze wrong questions
-                            try:
-                                start_time = time.time()
+                            with st.spinner("Matching questions to slides in your class materials..."):
+                                result = assistant.create_targeted_study_guide(
+                                    tmp_path,
+                                    questions_to_review,
+                                    fast_mode=fast_mode
+                                )
+                            
+                            elapsed = time.time() - start_time
+                            
+                            # Display results
+                            st.success(f"✅ Analysis complete in {elapsed:.1f} seconds!")
+                            
+                            # Show question-to-slide mapping
+                            if 'question_slides_map' in result:
+                                st.markdown(format_slide_recommendations(result['question_slides_map']))
                                 
-                                with st.spinner("Analyzing wrong answers and matching to slides..."):
-                                    result = assistant.create_targeted_study_guide(
-                                        st.session_state.test_path,
-                                        wrong_questions,
-                                        fast_mode=fast_mode
-                                    )
-                                
-                                elapsed = time.time() - start_time
-                                
-                                # Display results
-                                st.success(f"✅ Analysis complete in {elapsed:.1f} seconds!")
-                                
-                                # Show question-to-slide mapping
-                                if 'question_slides_map' in result:
-                                    st.markdown(format_slide_recommendations(result['question_slides_map']))
-                                    
-                                    # Show detailed slide content by question
-                                    with st.expander("📋 View Detailed Slide Content by Question"):
-                                        for q_num, slides_by_file in result['question_slides_map'].items():
-                                            st.subheader(f"Question {q_num}")
-                                            for filename, slides in slides_by_file.items():
-                                                st.markdown(f"**{filename}**")
-                                                for slide in slides:
-                                                    st.markdown(f"**Slide {slide['slide_number']}:**")
-                                                    st.text(slide['content'][:400] + "..." if len(slide['content']) > 400 else slide['content'])
-                                                    st.markdown("---")
-                                
-                                # Show test analysis
-                                with st.expander("🔍 Detailed Test Analysis"):
-                                    st.markdown(result.get('test_analysis', 'No analysis available'))
-                                
-                                # Show study guide
-                                st.markdown("---")
-                                st.header("📖 Your Personalized Study Guide")
-                                st.markdown(result.get('study_guide', 'No study guide generated'))
-                                
-                            except Exception as e:
-                                st.error(f"Error analyzing test: {str(e)}")
+                                # Show detailed slide content by question
+                                with st.expander("📋 View Detailed Slide Content by Question"):
+                                    for q_num, slides_by_file in result['question_slides_map'].items():
+                                        st.subheader(f"Question {q_num}")
+                                        for filename, slides in slides_by_file.items():
+                                            st.markdown(f"**{filename}**")
+                                            for slide in slides:
+                                                st.markdown(f"**Slide {slide['slide_number']}:**")
+                                                st.text(slide['content'][:400] + "..." if len(slide['content']) > 400 else slide['content'])
+                                                st.markdown("---")
+                            
+                            # Show test analysis
+                            with st.expander("🔍 Detailed Test Analysis"):
+                                st.markdown(result.get('test_analysis', 'No analysis available'))
+                            
+                            # Show study guide
+                            st.markdown("---")
+                            st.header("📖 Your Personalized Study Guide")
+                            st.markdown(result.get('study_guide', 'No study guide generated'))
+                        
+                        # Cleanup
+                        os.unlink(tmp_path)
+                
+                except Exception as e:
+                    st.error(f"Error analyzing test: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
 
 if __name__ == "__main__":
     main()
