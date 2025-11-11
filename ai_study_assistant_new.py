@@ -133,20 +133,21 @@ class AIStudyAssistant:
             f"Focus on these question numbers: {', '.join(map(str, flagged_questions))}" if flagged_questions else "Analyze all questions"
         )
 
-        analysis_prompt = f"""Analyze this practice test and extract:
-1. All question topics/concepts being tested
-2. If specific question numbers are flagged, focus on those questions
+        analysis_prompt = f"""Analyze this practice test and extract detailed information for each question.
 
 Practice Test Content:
 {test_content}
 
 {flagged_clause}
 
-Return a structured list of:
-- Question number (if identifiable)
-- Topic/concept being tested
-- Key terms and keywords related to this question
-If slide deck format, infer logical question/topic groupings from slide boundaries."""
+For each question (especially flagged/incorrect ones), provide:
+1. Question number (if identifiable)
+2. Main topic/concept being tested
+3. Specific sub-topics or skills required
+4. Key terms, formulas, or concepts needed to answer correctly
+5. Common misconceptions or mistakes for this type of question
+
+Format as a structured list with clear question-by-question breakdown."""
 
         response = openai.ChatCompletion.create(
             model=self.GEN_MODEL,
@@ -210,8 +211,8 @@ If slide deck format, infer logical question/topic groupings from slide boundari
         test_analysis = self.analyze_practice_test(test_path, flagged_questions)
         
         print("🔍 Finding relevant slides...")
-        # Find relevant slides based on the analysis
-        relevant_slides = self.find_relevant_slides(test_analysis["test_analysis"], n_results=15)
+        # Find relevant slides based on the analysis (increase results for better coverage)
+        relevant_slides = self.find_relevant_slides(test_analysis["test_analysis"], n_results=20)
         
         print("📚 Generating study guide...")
         # Create comprehensive study guide
@@ -220,17 +221,24 @@ If slide deck format, infer logical question/topic groupings from slide boundari
 Practice Test Analysis:
 {test_analysis["test_analysis"]}
 
-Relevant Course Material:
+Relevant Course Material (from PowerPoint slides):
 {self._format_slides_for_prompt(relevant_slides)}
 
-Create a study guide that:
-1. Explains each concept that appeared in flagged questions
-2. Provides clear definitions and examples
-3. Highlights common mistakes or misconceptions
-4. Includes memory aids or mnemonics where helpful
-5. Suggests practice problems or ways to apply the concepts
+Create a personalized study guide that:
+1. For EACH flagged/incorrect question:
+   - Clearly state which slide(s) cover the required concept
+   - Explain the concept in detail with examples from the slides
+   - Highlight what was likely misunderstood
+   - Provide step-by-step guidance on how to approach similar questions
 
-Format the guide with clear sections and bullet points."""
+2. Organize by question number when possible, showing:
+   - Question X → Review Slide Y from [filename]
+   - Key concept explanation
+   - Common mistakes to avoid
+
+3. Include summary of priority slides to review
+
+Format with clear headings, bullet points, and explicit slide references."""
 
         response = openai.ChatCompletion.create(
             model=self.GEN_MODEL,

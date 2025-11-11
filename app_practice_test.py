@@ -68,13 +68,15 @@ def process_uploaded_pptx(uploaded_file, assistant):
         return False
 
 def format_slide_recommendations(slides_by_file):
-    """Format slide recommendations for display."""
-    output = "### 📊 Slides to Review\n\n"
+    """Format slide recommendations for display with emphasis on question mapping."""
+    output = "### 📊 Slides to Review (Based on Your Test Performance)\n\n"
+    output += "_The following slides cover concepts from questions you flagged or got wrong:_\n\n"
     
     for filename, slides in slides_by_file.items():
-        output += f"**{filename}**\n"
+        output += f"**📁 {filename}**\n"
         slide_numbers = [slide['slide_number'] for slide in slides]
-        output += f"- Slides: {', '.join(map(str, slide_numbers))}\n\n"
+        output += f"- **Review Slides:** {', '.join(map(str, sorted(set(slide_numbers))))}\n"
+        output += f"- Total slides to review: {len(slides)}\n\n"
     
     return output
 
@@ -291,25 +293,28 @@ def main():
                 # Display results
                 st.success("✅ Analysis complete!")
                 
-                # Show slide recommendations
+                # Show slide recommendations prominently
+                st.markdown("---")
+                st.header("🎯 Recommended Slides to Review")
                 st.markdown(format_slide_recommendations(result['slides_to_review']))
                 
                 # Show detailed slide content
-                with st.expander("📋 View Slide Details"):
+                with st.expander("📋 View Full Slide Details"):
                     for filename, slides in result['slides_to_review'].items():
                         st.subheader(filename)
                         for slide in slides:
                             st.markdown(f"**Slide {slide['slide_number']}:**")
-                            st.text(slide['content'][:300] + "...")
+                            st.text(slide['content'][:400] + "..." if len(slide['content']) > 400 else slide['content'])
                             st.markdown("---")
                 
                 # Show test analysis
                 with st.expander("🔍 Test Analysis"):
                     st.markdown(result['test_analysis'])
                 
-                # Show study guide
+                # Show study guide with explicit question-to-slide mapping
                 st.markdown("---")
                 st.header("📖 Your Personalized Study Guide")
+                st.info("💡 This guide connects each question to specific slides you should review")
                 st.markdown(result['study_guide'])
                 
                 # Cleanup
@@ -323,18 +328,24 @@ def main():
         if not practice_test and st.session_state.get("pta_result"):
             st.info(f"Showing last analysis for: {st.session_state.get('pta_test_name','(unknown)')}")
             result = st.session_state["pta_result"]
+            
+            # Show slide recommendations prominently
+            st.markdown("---")
+            st.header("🎯 Recommended Slides to Review")
             st.markdown(format_slide_recommendations(result['slides_to_review']))
-            with st.expander("📋 View Slide Details"):
+            
+            with st.expander("📋 View Full Slide Details"):
                 for filename, slides in result['slides_to_review'].items():
                     st.subheader(filename)
                     for slide in slides:
                         st.markdown(f"**Slide {slide['slide_number']}:**")
-                        st.text(slide['content'][:300] + "...")
+                        st.text(slide['content'][:400] + "..." if len(slide['content']) > 400 else slide['content'])
                         st.markdown("---")
             with st.expander("🔍 Test Analysis"):
                 st.markdown(result['test_analysis'])
             st.markdown("---")
             st.header("📖 Your Personalized Study Guide")
+            st.info("💡 This guide connects each question to specific slides you should review")
             st.markdown(result['study_guide'])
 
             # Download buttons
