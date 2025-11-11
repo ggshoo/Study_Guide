@@ -8,6 +8,7 @@ import uuid
 import hashlib
 import openai
 import json
+import time
 
 # Initialize session state
 if 'user_id' not in st.session_state:
@@ -170,10 +171,41 @@ def process_uploaded_pdf(uploaded_file, assistant):
         st.error(f"Error processing PDF: {str(e)}")
         return False
 
+def process_uploaded_pptx(uploaded_file, assistant):
+    """Process an uploaded PowerPoint file and add to vector database."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.pptx') as tmp_file:
+        tmp_file.write(uploaded_file.getvalue())
+        tmp_path = tmp_file.name
+    
+    try:
+        # Process with assistant, preserving original filename
+        assistant.process_pptx(tmp_path, original_filename=uploaded_file.name)
+        
+        # Cleanup
+        os.unlink(tmp_path)
+        
+        return True
+    except Exception as e:
+        st.error(f"Error processing PowerPoint: {str(e)}")
+        return False
+
+def format_slide_recommendations(question_slides_map):
+    """Format slide recommendations grouped by question."""
+    output = "### 📊 Questions & Slides to Review\n\n"
+    
+    for q_num, slides_by_file in question_slides_map.items():
+        output += f"**Question {q_num}:**\n"
+        for filename, slides in slides_by_file.items():
+            slide_numbers = [slide['slide_number'] for slide in slides]
+            output += f"  - **{filename}**: Slides {', '.join(map(str, slide_numbers))}\n"
+        output += "\n"
+    
+    return output
+
 def main():
-    st.title("AI Study Assistant 🎓")
-    st.write("""Upload your own PDFs or use pre-loaded content to study more effectively.
-    Ask questions, generate quizzes, create study guides, and visualize concept relationships!""")
+    st.title("🎯 Practice Test Analyzer")
+    st.write("""Upload your class materials (PowerPoint slides and PDF notes) and practice tests. 
+    Mark which questions you got wrong, and the app will identify the exact slides you need to review!""")
 
     # Auth first
     if not auth_gate():
@@ -184,42 +216,59 @@ def main():
 
     assistant = get_assistant(st.session_state.user_id)
     
-    # Sidebar for file management and tools
+    # Sidebar for file management
     with st.sidebar:
-        st.header("📚 Manage Content")
+        st.header("📚 Upload Class Materials")
         
-        # File upload section
-        with st.expander("Upload PDFs", expanded=False):
-            uploaded_files = st.file_uploader(
-                "Upload your PDF files",
-                type=['pdf'],
+        # PowerPoint upload section
+        with st.expander("Upload PowerPoint Slides", expanded=False):
+            pptx_files = st.file_uploader(
+                "Upload lecture slides (.pptx)",
+                type=['pptx'],
                 accept_multiple_files=True,
-                help="Upload lecture notes, textbooks, or any study material"
+                help="Upload your class PowerPoint slides",
+                key="pptx_uploader"
             )
             
-            if uploaded_files:
-                if st.button("Process Uploaded Files"):
+            if pptx_files:
+                if st.button("Process PowerPoint Files"):
                     progress_bar = st.progress(0)
-                    for i, file in enumerate(uploaded_files):
+                    for i, file in enumerate(pptx_files):
+                        st.write(f"Processing {file.name}...")
+                        if process_uploaded_pptx(file, assistant):
+                            if 'pptx' not in st.session_state.processed_files:
+                                st.session_state.processed_files.append(file.name)
+                            st.success(f"✓ {file.name}")
+                        progress_bar.progress((i + 1) / len(pptx_files))
+                    st.success("All PowerPoint files processed!")
+        
+        # PDF upload section
+        with st.expander("Upload PDF Notes", expanded=False):
+            pdf_files = st.file_uploader(
+                "Upload PDF files (notes, textbooks, etc.)",
+                type=['pdf'],
+                accept_multiple_files=True,
+                help="Upload PDF class materials",
+                key="pdf_uploader"
+            )
+            
+            if pdf_files:
+                if st.button("Process PDF Files"):
+                    progress_bar = st.progress(0)
+                    for i, file in enumerate(pdf_files):
                         st.write(f"Processing {file.name}...")
                         if process_uploaded_pdf(file, assistant):
                             st.session_state.processed_files.append(file.name)
                             st.success(f"✓ {file.name}")
-                        progress_bar.progress((i + 1) / len(uploaded_files))
-                    st.success("All files processed!")
+                        progress_bar.progress((i + 1) / len(pdf_files))
+                    st.success("All PDF files processed!")
         
         # Show processed files
         if st.session_state.processed_files:
-            st.write("**Processed Files:**")
+            st.markdown("---")
+            st.write("**📁 Processed Materials:**")
             for filename in st.session_state.processed_files:
                 st.write(f"- {filename}")
-        
-        st.markdown("---")
-        st.header("🛠️ Study Tools")
-        tool = st.radio(
-            "Choose a tool:",
-            ["Ask Questions", "Generate Quiz", "Create Study Guide", "Concept Map"]
-        )
         
         st.markdown("---")
         # User info and logout
@@ -231,61 +280,97 @@ def main():
             st.session_state.authenticated = False
             st.session_state.current_username = None
             st.rerun()
-        
-    if tool == "Ask Questions":
-        st.header("Ask Questions About Course Content")
-        query = st.text_input("Enter your question:")
-        
-        if query:
-            with st.spinner("Searching and generating response..."):
-                if not api_ready:
-                    st.error("Provide an API key to enable AI responses.")
-                else:
-                    result = assistant.query_knowledge_base(query)
-                    st.write("### Answer:")
-                    st.write(result['answer'])
-                    with st.expander("View source content"):
-                        for chunk, metadata in zip(result['source_chunks'], result['metadata']):
-                            st.text(f"Source: {metadata['source']}")
-                            st.text(f"Chunk {metadata['chunk_id']}:")
-                            st.text(chunk)
-                            st.markdown("---")
+    
+    # Main content area - Practice Test Analyzer
+    st.header("📝 Analyze Your Practice Test")
+    st.write("""Upload your practice test and enter the question numbers you got wrong. 
+    The app will match them to specific slides from your uploaded materials.""")
+    
+    # Upload practice test
+    practice_test = st.file_uploader(
+        "Upload Practice Test (PDF)",
+        type=['pdf'],
+        key="practice_test"
+    )
+    
+    # Input for wrong questions
+    flagged_input = st.text_input(
+        "Question numbers you got wrong (comma-separated, e.g., 1,3,5,7)",
+        help="Enter the question numbers you got wrong or want to focus on"
+    )
+    
+    # Fast mode toggle
+    fast_mode = st.checkbox("⚡ Fast Mode (less detailed but quicker)", value=False)
+    
+    if practice_test and flagged_input and st.button("🔍 Analyze Test & Find Slides to Review"):
+        if not api_ready:
+            st.error("Please provide an API key to enable analysis.")
+        else:
+            # Parse flagged questions
+            flagged_questions = None
+            if flagged_input.strip():
+                try:
+                    flagged_questions = [int(q.strip()) for q in flagged_input.split(',')]
+                    st.info(f"Analyzing questions: {', '.join(map(str, flagged_questions))}")
+                except:
+                    st.error("Could not parse question numbers. Please use format: 1,3,5,7")
+                    st.stop()
+            
+            # Save practice test temporarily
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                tmp_file.write(practice_test.getvalue())
+                tmp_path = tmp_file.name
+            
+            try:
+                # Progress tracking
+                start_time = time.time()
+                progress_placeholder = st.empty()
+                timer_placeholder = st.empty()
                 
-    elif tool == "Generate Quiz":
-        st.header("Generate Practice Quiz")
-        topic = st.text_input("Enter the topic for the quiz:")
-        
-        if topic:
-            with st.spinner("Generating quiz..."):
-                if not api_ready:
-                    st.error("Provide an API key to enable quiz generation.")
-                else:
-                    quiz = assistant.generate_quiz(topic)
-                    st.markdown(quiz)
+                with st.spinner("Analyzing your practice test and matching to slides..."):
+                    # Generate targeted study guide with fast mode
+                    result = assistant.create_targeted_study_guide(
+                        tmp_path, 
+                        flagged_questions,
+                        fast_mode=fast_mode
+                    )
                 
-    elif tool == "Create Study Guide":
-        st.header("Create Focused Study Guide")
-        topic = st.text_input("Enter the topic for the study guide:")
-        
-        if topic:
-            with st.spinner("Creating study guide..."):
-                if not api_ready:
-                    st.error("Provide an API key to enable study guide creation.")
-                else:
-                    guide = assistant.create_study_guide(topic)
-                    st.markdown(guide)
+                elapsed = time.time() - start_time
                 
-    elif tool == "Concept Map":
-        st.header("Generate Concept Map")
-        topic = st.text_input("Enter the topic to map:")
-        
-        if topic:
-            with st.spinner("Generating concept map..."):
-                if not api_ready:
-                    st.error("Provide an API key to enable concept map generation.")
-                else:
-                    concept_map = assistant.concept_map(topic)
-                    st.code(concept_map)
+                # Display results
+                st.success(f"✅ Analysis complete in {elapsed:.1f} seconds!")
+                
+                # Show question-to-slide mapping
+                if 'question_slides_map' in result:
+                    st.markdown(format_slide_recommendations(result['question_slides_map']))
+                    
+                    # Show detailed slide content by question
+                    with st.expander("📋 View Detailed Slide Content by Question"):
+                        for q_num, slides_by_file in result['question_slides_map'].items():
+                            st.subheader(f"Question {q_num}")
+                            for filename, slides in slides_by_file.items():
+                                st.markdown(f"**{filename}**")
+                                for slide in slides:
+                                    st.markdown(f"**Slide {slide['slide_number']}:**")
+                                    st.text(slide['content'][:400] + "..." if len(slide['content']) > 400 else slide['content'])
+                                    st.markdown("---")
+                
+                # Show test analysis
+                with st.expander("🔍 Detailed Test Analysis"):
+                    st.markdown(result.get('test_analysis', 'No analysis available'))
+                
+                # Show study guide
+                st.markdown("---")
+                st.header("📖 Your Personalized Study Guide")
+                st.markdown(result.get('study_guide', 'No study guide generated'))
+                
+                # Cleanup
+                os.unlink(tmp_path)
+                
+            except Exception as e:
+                st.error(f"Error analyzing test: {str(e)}")
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
 
 if __name__ == "__main__":
     main()
