@@ -7,6 +7,7 @@ from ai_study_assistant_new import AIStudyAssistant
 import uuid
 import hashlib
 import openai
+import json
 
 # Initialize session state
 if 'user_id' not in st.session_state:
@@ -18,36 +19,93 @@ if 'processed_files' not in st.session_state:
 # Authentication & API Key #
 ############################
 
-def verify_credentials(user: str, password: str) -> bool:
-    """Verify username/password against environment variables.
-    Password is stored as SHA-256 hex digest in APP_PASS_HASH.
-    Returns True if credentials match; False otherwise."""
-    expected_user = os.getenv("APP_USERNAME")
-    expected_hash = os.getenv("APP_PASS_HASH")
-    if not expected_user or not expected_hash:
-        # If not configured, deny auth (fail closed) to avoid accidental open access.
-        return False
+# User database file
+USERS_FILE = "users.json"
+
+def load_users():
+    """Load users from JSON file."""
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_users(users):
+    """Save users to JSON file."""
+    with open(USERS_FILE, 'w') as f:
+        json.dump(users, f, indent=2)
+
+def create_user(username: str, password: str) -> tuple[bool, str]:
+    """Create a new user account.
+    Returns (success: bool, message: str)"""
+    if not username or not password:
+        return False, "Username and password cannot be empty."
+    
+    if len(password) < 6:
+        return False, "Password must be at least 6 characters."
+    
+    users = load_users()
+    
+    if username in users:
+        return False, "Username already exists."
+    
+    # Hash the password
     pwd_hash = hashlib.sha256(password.encode()).hexdigest()
-    return user == expected_user and pwd_hash == expected_hash
+    users[username] = {
+        "password_hash": pwd_hash,
+        "created_at": str(uuid.uuid4())  # Use as timestamp placeholder
+    }
+    
+    save_users(users)
+    return True, "Account created successfully!"
+
+def verify_credentials(username: str, password: str) -> bool:
+    """Verify username/password against stored users.
+    Returns True if credentials match; False otherwise."""
+    users = load_users()
+    
+    if username not in users:
+        return False
+    
+    pwd_hash = hashlib.sha256(password.encode()).hexdigest()
+    return users[username]["password_hash"] == pwd_hash
 
 def auth_gate():
     """Sidebar authentication gate. Sets st.session_state.authenticated."""
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
+    
+    if "current_username" not in st.session_state:
+        st.session_state.current_username = None
 
     if st.session_state.authenticated:
         return True
 
-    with st.sidebar.expander("🔐 Login Required", expanded=True):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        if st.button("Login"):
-            if verify_credentials(username, password):
-                st.session_state.authenticated = True
-                st.success("Authenticated.")
-                st.experimental_rerun()
-            else:
-                st.error("Invalid credentials.")
+    with st.sidebar.expander("🔐 Authentication", expanded=True):
+        auth_mode = st.radio("Select mode:", ["Login", "Create Account"])
+        
+        username = st.text_input("Username", key="auth_username")
+        password = st.text_input("Password", type="password", key="auth_password")
+        
+        if auth_mode == "Login":
+            if st.button("Login"):
+                if verify_credentials(username, password):
+                    st.session_state.authenticated = True
+                    st.session_state.current_username = username
+                    # Use username as user_id for persistent storage
+                    st.session_state.user_id = hashlib.sha256(username.encode()).hexdigest()[:8]
+                    st.success("Login successful!")
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password.")
+        else:  # Create Account
+            if st.button("Create Account"):
+                success, message = create_user(username, password)
+                if success:
+                    st.success(message)
+                    st.info("You can now login with your new account.")
+                else:
+                    st.error(message)
+    
     return False
 
 def ensure_api_key():
@@ -164,7 +222,15 @@ def main():
         )
         
         st.markdown("---")
+        # User info and logout
+        if st.session_state.current_username:
+            st.write(f"**User:** {st.session_state.current_username}")
         st.write(f"**Session ID:** `{st.session_state.user_id}`")
+        
+        if st.button("🚪 Logout"):
+            st.session_state.authenticated = False
+            st.session_state.current_username = None
+            st.rerun()
         
     if tool == "Ask Questions":
         st.header("Ask Questions About Course Content")
