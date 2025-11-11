@@ -16,6 +16,28 @@ if 'user_id' not in st.session_state:
 if 'processed_files' not in st.session_state:
     st.session_state.processed_files = []
 
+# Persistent file tracking
+USER_FILES_DIR = "user_files"
+os.makedirs(USER_FILES_DIR, exist_ok=True)
+
+def get_user_files_path(user_id):
+    """Get path to user's persistent file list."""
+    return os.path.join(USER_FILES_DIR, f"{user_id}_files.json")
+
+def load_user_files(user_id):
+    """Load user's processed files from disk."""
+    file_path = get_user_files_path(user_id)
+    if os.path.exists(file_path):
+        with open(file_path, 'r') as f:
+            return json.load(f)
+    return []
+
+def save_user_files(user_id, files):
+    """Save user's processed files to disk."""
+    file_path = get_user_files_path(user_id)
+    with open(file_path, 'w') as f:
+        json.dump(files, f, indent=2)
+
 ############################
 # Authentication & API Key #
 ############################
@@ -260,6 +282,10 @@ def main():
 
     assistant = get_assistant(st.session_state.user_id)
     
+    # Load user's previously processed files
+    if not st.session_state.processed_files:
+        st.session_state.processed_files = load_user_files(st.session_state.user_id)
+    
     # Sidebar for file management
     with st.sidebar:
         st.header("📚 Upload Class Materials")
@@ -280,10 +306,11 @@ def main():
                     for i, file in enumerate(pptx_files):
                         st.write(f"Processing {file.name}...")
                         if process_uploaded_pptx(file, assistant):
-                            if 'pptx' not in st.session_state.processed_files:
+                            if file.name not in st.session_state.processed_files:
                                 st.session_state.processed_files.append(file.name)
                             st.success(f"✓ {file.name}")
                         progress_bar.progress((i + 1) / len(pptx_files))
+                    save_user_files(st.session_state.user_id, st.session_state.processed_files)
                     st.success("All PowerPoint files processed!")
         
         # PDF upload section
@@ -305,6 +332,7 @@ def main():
                             st.session_state.processed_files.append(file.name)
                             st.success(f"✓ {file.name}")
                         progress_bar.progress((i + 1) / len(pdf_files))
+                    save_user_files(st.session_state.user_id, st.session_state.processed_files)
                     st.success("All PDF files processed!")
         
         # Show processed files
@@ -445,10 +473,16 @@ def main():
                             
                             elapsed = time.time() - start_time
                             
-                            # Display results
+                            # Display results - SUMMARY FIRST
                             st.success(f"✅ Analysis complete in {elapsed:.1f} seconds!")
                             
-                            # Show question-to-slide mapping
+                            st.markdown("---")
+                            st.header("📖 Your Personalized Study Guide")
+                            st.markdown(result.get('study_guide', 'No study guide generated'))
+                            
+                            st.markdown("---")
+                            
+                            # Show question-to-slide mapping - DETAILS AFTER
                             if 'question_slides_map' in result:
                                 # Show priority slides first (grouped by slide)
                                 st.markdown(format_priority_slides(result['question_slides_map']))
@@ -468,14 +502,9 @@ def main():
                                                 st.text(slide['content'][:400] + "..." if len(slide['content']) > 400 else slide['content'])
                                                 st.markdown("---")
                             
-                            # Show test analysis
-                            with st.expander("🔍 Detailed Test Analysis"):
+                            # Show test analysis details at the very bottom
+                            with st.expander("🔍 Detailed Test Analysis (Question-by-Question)"):
                                 st.markdown(result.get('test_analysis', 'No analysis available'))
-                            
-                            # Show study guide
-                            st.markdown("---")
-                            st.header("📖 Your Personalized Study Guide")
-                            st.markdown(result.get('study_guide', 'No study guide generated'))
                         
                         # Cleanup
                         os.unlink(tmp_path)

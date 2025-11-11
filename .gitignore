@@ -10,3 +10,4 @@ test_pdfs/
 rag_study_assistant/db/
 users.json
 saved_results/
+user_files/
