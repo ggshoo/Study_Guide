@@ -400,11 +400,32 @@ Format with clear headings, bullet points, and explicit slide references."""
         }
 
     def _format_slides_for_prompt(self, slides_by_file: dict, max_slides: int = 10):
-        """Format slide content for GPT prompt."""
+        """Format slide content for GPT prompt.
+        
+        Args:
+            slides_by_file: Can be either:
+                - dict of filename -> list of slides (old format)
+                - dict of question_num -> dict of filename -> list of slides (new format)
+        """
         formatted = ""
         count = 0
         
+        # Check if this is the new nested format (question -> filename -> slides)
+        first_key = next(iter(slides_by_file.keys())) if slides_by_file else None
+        if first_key and isinstance(slides_by_file[first_key], dict):
+            # New format: flatten question-level nesting
+            file_slides_map = {}
+            for q_num, files in slides_by_file.items():
+                for filename, slides in files.items():
+                    if filename not in file_slides_map:
+                        file_slides_map[filename] = []
+                    file_slides_map[filename].extend(slides)
+            slides_by_file = file_slides_map
+        
+        # Now format as filename -> slides
         for filename, slides in slides_by_file.items():
+            if count >= max_slides:
+                break
             formatted += f"\n\nFrom {filename}:\n"
             for slide in slides[:max_slides]:
                 if count >= max_slides:
