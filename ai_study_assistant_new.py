@@ -132,14 +132,81 @@ class AIStudyAssistant:
             )
 
     def extract_pdf_content(self, pdf_path: str):
-        """Extract text content from PDF file."""
-        content = ""
+        """Extract text content from PDF."""
         with open(pdf_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
-            for page_num, page in enumerate(pdf_reader.pages, start=1):
-                content += f"\n--- Page {page_num} ---\n"
-                content += page.extract_text()
-        return content
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text()
+        return text
+    
+    def extract_questions_and_answers(self, test_path: str):
+        """Extract questions and correct answers from a practice test.
+        
+        Returns:
+            dict with 'questions' (dict of q_num -> question_text) and 
+            'correct_answers' (dict of q_num -> answer)
+        """
+        ext = Path(test_path).suffix.lower()
+        if ext == ".pdf":
+            test_content = self.extract_pdf_content(test_path)
+        elif ext == ".pptx":
+            slides = self.extract_pptx_content(test_path)
+            test_content = "\n".join([s["content"] for s in slides])
+        else:
+            raise ValueError(f"Unsupported file type: {ext}")
+        
+        extraction_prompt = f"""Extract all questions and their correct answers from this practice test.
+
+Practice Test Content:
+{test_content}
+
+Return the data in this exact JSON format:
+{{
+    "questions": {{
+        "1": "question text here",
+        "2": "question text here",
+        ...
+    }},
+    "correct_answers": {{
+        "1": "A",
+        "2": "B",
+        ...
+    }}
+}}
+
+Rules:
+- Question numbers should be integers as strings
+- For multiple choice, return just the letter (A, B, C, D, etc.)
+- If no answer key is found, return an empty correct_answers dict
+- Include ALL questions you can identify
+"""
+        
+        response = openai.ChatCompletion.create(
+            model=self.GEN_MODEL,
+            messages=[
+                {"role": "system", "content": "You are an expert at extracting structured information from practice tests. Always return valid JSON."},
+                {"role": "user", "content": extraction_prompt}
+            ],
+            temperature=0.1,
+            max_tokens=2000
+        )
+        
+        import json
+        import re
+        
+        content = response.choices[0].message["content"]
+        # Extract JSON from markdown code blocks if present
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(1)
+        
+        try:
+            result = json.loads(content)
+            return result
+        except:
+            # Fallback if parsing fails
+            return {"questions": {}, "correct_answers": {}}
 
     def analyze_practice_test(self, test_path: str, flagged_questions: list = None):
         """Analyze practice test (PDF or PPTX) and identify topics to review.
