@@ -7,6 +7,8 @@ from ai_study_assistant_new import AIStudyAssistant
 import uuid
 import json
 from datetime import datetime
+import threading
+import time
 
 # Initialize session state
 if 'user_id' not in st.session_state:
@@ -212,28 +214,79 @@ def main():
                 tmp_path = tmp_file.name
             
             try:
-                with st.spinner("Analyzing your practice test..."):
-                    # Generate targeted study guide
-                    result = assistant.create_targeted_study_guide(tmp_path, flagged_questions)
-                    # Persist result in session so it survives navigation
-                    st.session_state["pta_result"] = result
-                    st.session_state["pta_test_name"] = practice_test.name
-                    # Save to disk for persistence across restarts
+                # Estimate time before starting
+                est_seconds = 20.0
+                if ext == ".pdf":
                     try:
-                        save_dir = Path("saved_results")
-                        save_dir.mkdir(parents=True, exist_ok=True)
-                        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-                        sid = st.session_state.user_id
-                        out = {
-                            "test_name": practice_test.name,
-                            "timestamp": stamp,
-                            "session_id": sid,
-                            "result": result,
-                        }
-                        out_path = save_dir / f"pta_{stamp}_{sid}.json"
-                        out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+                        pages = len(PyPDF2.PdfReader(tmp_path).pages)
+                        est_seconds = 20.0 + pages * 0.5
+                    except Exception:
+                        pass
+                elif ext == ".pptx":
+                    try:
+                        # Lazy import to avoid dependency error if not installed
+                        from pptx import Presentation  # type: ignore
+                        slides = len(Presentation(tmp_path).slides)
+                        est_seconds = 20.0 + slides * 0.2
+                    except Exception:
+                        pass
+
+                eta_minutes = max(1, int(round(est_seconds / 60.0)))
+                st.info(f"Estimated time: ~{eta_minutes} minute(s). You can switch tabs and come back.")
+
+                # Run analysis in a background thread, show live elapsed timer
+                result_holder = {"result": None, "error": None}
+                def _run():
+                    try:
+                        result_holder["result"] = assistant.create_targeted_study_guide(tmp_path, flagged_questions)
                     except Exception as e:
-                        st.warning(f"Could not save analysis: {e}")
+                        result_holder["error"] = str(e)
+
+                t0 = time.perf_counter()
+                th = threading.Thread(target=_run, daemon=True)
+                th.start()
+
+                timer_placeholder = st.empty()
+                status_placeholder = st.empty()
+                while th.is_alive():
+                    elapsed = time.perf_counter() - t0
+                    mm = int(elapsed // 60)
+                    ss = int(elapsed % 60)
+                    timer_placeholder.info(f"Elapsed: {mm:02d}:{ss:02d}")
+                    time.sleep(0.5)
+                th.join()
+
+                total = time.perf_counter() - t0
+                mm = int(total // 60)
+                ss = int(total % 60)
+
+                if result_holder["error"]:
+                    raise RuntimeError(result_holder["error"]) 
+
+                result = result_holder["result"]
+                status_placeholder.success(f"✅ Analysis complete in {mm}m {ss}s")
+
+                # Persist result in session so it survives navigation
+                st.session_state["pta_result"] = result
+                st.session_state["pta_test_name"] = practice_test.name
+                # Save to disk for persistence across restarts
+                try:
+                    save_dir = Path("saved_results")
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                    sid = st.session_state.user_id
+                    out = {
+                        "test_name": practice_test.name,
+                        "timestamp": stamp,
+                        "session_id": sid,
+                        "duration_seconds": int(total),
+                        "estimate_minutes": eta_minutes,
+                        "result": result,
+                    }
+                    out_path = save_dir / f"pta_{stamp}_{sid}.json"
+                    out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception as e:
+                    st.warning(f"Could not save analysis: {e}")
                 
                 # Display results
                 st.success("✅ Analysis complete!")

@@ -155,7 +155,7 @@ If slide deck format, infer logical question/topic groupings from slide boundari
                 {"role": "user", "content": analysis_prompt}
             ],
             temperature=0.3,
-            max_tokens=2000
+            max_tokens=1200
         )
 
         analysis = response.choices[0].message["content"]
@@ -239,7 +239,7 @@ Format the guide with clear sections and bullet points."""
                 {"role": "user", "content": study_guide_prompt}
             ],
             temperature=0.5,
-            max_tokens=3000
+            max_tokens=1600
         )
         
         study_guide = response.choices[0].message["content"]
