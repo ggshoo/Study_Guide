@@ -197,6 +197,13 @@ def main():
             help="Enter the question numbers you got wrong or want to focus on"
         )
         
+        # Fast mode toggle
+        fast_mode = st.checkbox(
+            "⚡ Fast Mode",
+            value=False,
+            help="Faster processing with slightly less detail (~30-40% quicker)"
+        )
+        
         if practice_test and st.button("Analyze Test & Generate Study Guide"):
             # Parse flagged questions
             flagged_questions = None
@@ -234,13 +241,17 @@ def main():
                         pass
 
                 eta_minutes = max(1, int(round(est_seconds / 60.0)))
-                st.info(f"Estimated time: ~{eta_minutes} minute(s). You can switch tabs and come back.")
+                if fast_mode:
+                    eta_minutes = max(1, int(eta_minutes * 0.65))  # Fast mode ~35% faster
+                
+                mode_label = "⚡ FAST MODE" if fast_mode else "NORMAL MODE"
+                st.info(f"{mode_label} | Estimated time: ~{eta_minutes} minute(s). You can switch tabs and come back.")
 
                 # Run analysis in a background thread, show live elapsed timer
                 result_holder = {"result": None, "error": None}
                 def _run():
                     try:
-                        result_holder["result"] = assistant.create_targeted_study_guide(tmp_path, flagged_questions)
+                        result_holder["result"] = assistant.create_targeted_study_guide(tmp_path, flagged_questions, fast_mode=fast_mode)
                     except Exception as e:
                         result_holder["error"] = str(e)
 
@@ -266,11 +277,12 @@ def main():
                     raise RuntimeError(result_holder["error"]) 
 
                 result = result_holder["result"]
-                status_placeholder.success(f"✅ Analysis complete in {mm}m {ss}s")
+                status_placeholder.success(f"✅ Analysis complete in {mm}m {ss}s {'⚡ (Fast Mode)' if fast_mode else ''}")
 
                 # Persist result in session so it survives navigation
                 st.session_state["pta_result"] = result
                 st.session_state["pta_test_name"] = practice_test.name
+                st.session_state["pta_fast_mode"] = fast_mode
                 # Save to disk for persistence across restarts
                 try:
                     save_dir = Path("saved_results")
@@ -283,6 +295,7 @@ def main():
                         "session_id": sid,
                         "duration_seconds": int(total),
                         "estimate_minutes": eta_minutes,
+                        "fast_mode": fast_mode,
                         "result": result,
                     }
                     out_path = save_dir / f"pta_{stamp}_{sid}.json"
@@ -326,7 +339,8 @@ def main():
 
         # If there is a previous analysis saved in session, offer to show it
         if not practice_test and st.session_state.get("pta_result"):
-            st.info(f"Showing last analysis for: {st.session_state.get('pta_test_name','(unknown)')}")
+            mode_indicator = " ⚡ (Fast Mode)" if st.session_state.get("pta_fast_mode") else ""
+            st.info(f"Showing last analysis for: {st.session_state.get('pta_test_name','(unknown)')}{mode_indicator}")
             result = st.session_state["pta_result"]
             
             # Show slide recommendations prominently

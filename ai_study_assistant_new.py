@@ -34,10 +34,42 @@ class AIStudyAssistant:
             length_function=len,
         )
         self.GEN_MODEL = os.getenv("GEN_MODEL", "gpt-4o-mini")
+        # Embedding cache for performance (text hash -> embedding vector)
+        self._embedding_cache = {}
 
-    def get_embeddings_batch(self, texts):
-        resp = openai.Embedding.create(model="text-embedding-3-small", input=texts)
-        return [d["embedding"] for d in resp["data"]]
+    def get_embeddings_batch(self, texts, use_cache=True):
+        """Batch embedding with optional caching to avoid redundant API calls."""
+        import hashlib
+        
+        if not use_cache:
+            resp = openai.Embedding.create(model="text-embedding-3-small", input=texts)
+            return [d["embedding"] for d in resp["data"]]
+        
+        # Check cache and only embed uncached texts
+        results = [None] * len(texts)
+        texts_to_embed = []
+        indices_to_embed = []
+        
+        for i, text in enumerate(texts):
+            text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            if text_hash in self._embedding_cache:
+                results[i] = self._embedding_cache[text_hash]
+            else:
+                texts_to_embed.append(text)
+                indices_to_embed.append(i)
+        
+        # Embed uncached texts
+        if texts_to_embed:
+            resp = openai.Embedding.create(model="text-embedding-3-small", input=texts_to_embed)
+            embeddings = [d["embedding"] for d in resp["data"]]
+            
+            # Cache and populate results
+            for idx, text, emb in zip(indices_to_embed, texts_to_embed, embeddings):
+                text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+                self._embedding_cache[text_hash] = emb
+                results[idx] = emb
+        
+        return results
 
     def get_embedding(self, text: str):
         """Call OpenAI Embeddings API directly and return the vector."""
@@ -195,13 +227,14 @@ Format as a structured list with clear question-by-question breakdown."""
         
         return slides_by_file
 
-    def create_targeted_study_guide(self, test_path: str, flagged_questions: list = None):
+    def create_targeted_study_guide(self, test_path: str, flagged_questions: list = None, fast_mode: bool = False):
         """
         Create a personalized study guide based on practice test performance.
         
         Args:
             test_path: Path to practice test file (.pdf or .pptx)
             flagged_questions: List of question numbers to focus on (wrong/flagged)
+            fast_mode: If True, use lighter processing for faster results
         
         Returns:
             Dictionary with study guide and slide recommendations
@@ -211,12 +244,17 @@ Format as a structured list with clear question-by-question breakdown."""
         test_analysis = self.analyze_practice_test(test_path, flagged_questions)
         
         print("🔍 Finding relevant slides...")
-        # Find relevant slides based on the analysis (increase results for better coverage)
-        relevant_slides = self.find_relevant_slides(test_analysis["test_analysis"], n_results=20)
+        # Find relevant slides based on the analysis (adjust count based on mode)
+        n_slides = 12 if fast_mode else 20
+        relevant_slides = self.find_relevant_slides(test_analysis["test_analysis"], n_results=n_slides)
         
         print("📚 Generating study guide...")
+        # Adjust generation parameters for fast mode
+        max_tokens = 1000 if fast_mode else 1600
+        temperature = 0.4 if fast_mode else 0.5
+        
         # Create comprehensive study guide
-        study_guide_prompt = f"""Based on this practice test analysis and the relevant course material, create a comprehensive study guide.
+        study_guide_prompt = f"""Based on this practice test analysis and the relevant course material, create a {"concise" if fast_mode else "comprehensive"} study guide.
 
 Practice Test Analysis:
 {test_analysis["test_analysis"]}
@@ -246,8 +284,8 @@ Format with clear headings, bullet points, and explicit slide references."""
                 {"role": "system", "content": "You are an expert tutor creating personalized study guides."},
                 {"role": "user", "content": study_guide_prompt}
             ],
-            temperature=0.5,
-            max_tokens=1600
+            temperature=temperature,
+            max_tokens=max_tokens
         )
         
         study_guide = response.choices[0].message["content"]
