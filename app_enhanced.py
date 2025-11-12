@@ -268,7 +268,88 @@ def format_priority_slides(question_slides_map):
     
     return output
 
+def shorten_filename(filename):
+    """Create meaningful shortened names from long filenames."""
+    import re
+    # Remove file extension
+    name = filename.replace('.pptx', '').replace('.pdf', '')
+    # Remove dates (YYYY-MM-DD format)
+    name = re.sub(r'\d{4}-\d{2}-\d{2}_?', '', name)
+    # Remove common prefixes
+    name = re.sub(r'^m\d+_', '', name)
+    # Remove numbers in parentheses at end
+    name = re.sub(r'\s*\(\d+\)\s*$', '', name)
+    # Remove extra underscores and hyphens, capitalize
+    name = name.replace('_', ' ').replace('-', ' ')
+    # Title case and clean up
+    name = ' '.join(name.split()).title()
+    return name if name else filename
+
 def format_question_slide_summary(question_slides_map):
+    """Return a compact markdown table mapping each question to its recommended slides."""
+    lines = [
+        "## 📊 SUMMARY SECTION",
+        "",
+        "### Question → Slides Quick Reference",
+        "",
+        "| Question | Recommended Slides |",
+        "|---------:|:-------------------|",
+    ]
+    # sort by numeric question order
+    for q_num in sorted(question_slides_map, key=lambda x: int(x)):
+        # Group slides by filename and list slide numbers once per file
+        per_file = []
+        for filename, slides in question_slides_map[q_num].items():
+            short_name = shorten_filename(filename)
+            slide_nums = sorted({int(slide['slide_number']) for slide in slides})
+            per_file.append(f"**{short_name}**: {', '.join(map(str, slide_nums))}")
+        lines.append(f"| **Q{q_num}** | {' · '.join(per_file)} |")
+    return "\n".join(lines)
+
+def format_detailed_explanations(question_slides_map, questions_data=None):
+    """Create detailed section with explanations for each question-to-slide mapping."""
+    lines = [
+        "## 📖 DETAILED SECTION",
+        "",
+        "### Question-by-Question Slide Analysis",
+        "",
+        "Detailed explanations of why each slide is relevant to each question.",
+        ""
+    ]
+    
+    for q_num in sorted(question_slides_map, key=lambda x: int(x)):
+        lines.append(f"---")
+        lines.append(f"### Question {q_num}")
+        lines.append("")
+        
+        if questions_data and 'questions' in questions_data and q_num in questions_data['questions']:
+            q_text = questions_data['questions'][q_num]
+            lines.append(f"**Question Text:** {q_text[:200]}{'...' if len(q_text) > 200 else ''}")
+            lines.append("")
+        
+        lines.append("**Recommended Slides:**")
+        lines.append("")
+        
+        for filename, slides in question_slides_map[q_num].items():
+            short_name = shorten_filename(filename)
+            lines.append(f"**📑 {short_name}** (_{filename}_)")
+            lines.append("")
+            
+            for slide in slides:
+                slide_num = slide['slide_number']
+                content = slide.get('content', '')
+                # Get first meaningful sentence or line
+                preview = content.strip()[:150].replace('\n', ' ')
+                if len(content) > 150:
+                    preview += "..."
+                
+                lines.append(f"- **Slide {slide_num}**: {preview}")
+            lines.append("")
+        
+    return "\n".join(lines)
+
+def format_question_slide_summary(question_slides_map):
+
     """Return a compact markdown table mapping each question to its recommended slides."""
     lines = [
         "### 🗺️ Question → Slides Summary",
@@ -507,15 +588,24 @@ def main():
                                     st.metric("Coverage", f"{coverage:.0f}%")
                             
                             st.markdown("---")
-                            # Summary table FIRST, then priority slides, then detailed guide
+                            
+                            # SUMMARY SECTION
                             if 'question_slides_map' in result:
                                 st.markdown(format_question_slide_summary(result['question_slides_map']))
-                                st.markdown("---")
-                                st.markdown(format_priority_slides(result['question_slides_map']))
-                                st.markdown("---")
-
-                            st.header("📖 Detailed Study Guide")
-                            st.markdown(result.get('study_guide', 'No study guide generated'))
+                            
+                            st.markdown("---")
+                            
+                            # DETAILED SECTION
+                            if 'question_slides_map' in result:
+                                # Detailed explanations with slide content
+                                st.markdown(format_detailed_explanations(result['question_slides_map'], questions_data))
+                                
+                            st.markdown("---")
+                            
+                            # Study guide from GPT (now in expander to reduce clutter)
+                            with st.expander("🤖 AI-Generated Study Guide (Full Text)", expanded=False):
+                                st.markdown(result.get('study_guide', 'No study guide generated'))
+                            
                             st.markdown("---")
 
                             # Show question-to-slide mapping - DETAILS AFTER

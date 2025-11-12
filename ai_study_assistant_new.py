@@ -390,17 +390,34 @@ Questions:
 {json.dumps(batch_questions, indent=2)}
 
 CRITICAL: You MUST cover ALL {len(batch_questions)} questions listed above. For EACH question:
-1. Clearly state which slide(s) cover the required concept
-2. Explain the medical concept in detail with examples from the slides
-3. Highlight what was likely misunderstood
-4. Provide step-by-step guidance on how to approach similar questions
 
-Organize by question number, showing:
-- Question X → Review Slide Y from [filename]
-- Key medical concept explanation
-- Common mistakes to avoid
+1. **Slide Mapping Explanation**: Clearly explain WHY each recommended slide is relevant to this question
+   - Which specific medical concept does the slide cover?
+   - How does it relate to the question being asked?
 
-Use clear headings, bullet points, and explicit slide references. Be medically accurate."""
+2. **Multiple Choice Analysis** (if applicable):
+   - For each answer option (A, B, C, D, etc.), explain:
+     * Why it's correct/incorrect
+     * Which slide(s) contain information about this option
+     * Key concepts to understand for ruling in/out this option
+
+3. **Medical Concept Review**:
+   - Explain the medical concept in detail with examples from the slides
+   - Highlight what was likely misunderstood
+   - Common clinical pitfalls or misconceptions
+
+4. **Study Approach**:
+   - Step-by-step guidance on how to approach similar questions
+   - Key decision points or diagnostic reasoning
+
+Format for EACH question:
+### Question [#]: [Brief topic]
+**Recommended Slides:** [List with explanations]
+**Answer Analysis:** [For MC: cover each option with slide references]
+**Key Concepts:** [Medical content review]
+**Study Tips:** [How to approach similar questions]
+
+Be medically accurate and thorough."""
 
             response = openai.ChatCompletion.create(
                 model=self.GEN_MODEL,
